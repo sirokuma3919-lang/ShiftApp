@@ -23,7 +23,7 @@ LOCK_FILE = f"{TARGET_MONTH}月シフト提出状況.lock"
 DEPARTMENTS = ["選択してください", "家電", "季節AV", "情報", "通信"]
 ADMIN_PASSWORD = "password"
 
-# 🌟【超重要】取得した「ウェブアプリのURL」をここに貼り付けてください！
+# 🌟【超重要】取得した「ウェブアプリのURL」
 GAS_URL = "https://script.google.com/macros/s/AKfycbx20gcPFY7CKjGRjNMNHI9zNgwzmC_i8u1Wsw1r2BrpTtYUmB06ejgWFGKtLbJaTlPkGw/exec"
 
 st.set_page_config(page_title="シフト希望提出フォーム", layout="wide")
@@ -39,6 +39,9 @@ def init_session_state():
         st.session_state.is_submitted = False
     if "excel_warning" not in st.session_state:
         st.session_state.excel_warning = False
+    # 🌟【追加】連打防止用の「処理中」フラグ
+    if "is_processing" not in st.session_state:
+        st.session_state.is_processing = False
 
 def get_month_days():
     """来月の日数と日付ラベルのリストを取得する"""
@@ -291,14 +294,27 @@ elif st.session_state.confirm_mode:
     with col_btn2:
         if st.button("この内容で確定・提出する", type="primary", use_container_width=True):
             
-            result = save_shift_data(emp_code, name, department, target_days, shift_requests)
-            
-            if result == "gas_error":
-                st.error("【通信エラー】Googleスプレッドシートへの送信に失敗しました。時間をおいてもう一度お試しいただくか、管理者へ連絡してください。")
+            # 🌟【追加】連打防止機能
+            if st.session_state.is_processing:
+                # 既にボタンが押されて処理中の場合は、警告を出して何もしない
+                st.toast("⚠️ 現在データを送信中です。そのままお待ちください。", icon="⏳")
             else:
-                st.session_state.is_submitted = True
-                st.session_state.confirm_mode = False
-                st.rerun()
+                # 処理中フラグをONにする
+                st.session_state.is_processing = True
+                
+                # 🌟【追加】ぐるぐる回るスピナーで「送信中」を分かりやすくする
+                with st.spinner("クラウドにシフトを送信しています..."):
+                    result = save_shift_data(emp_code, name, department, target_days, shift_requests)
+                
+                if result == "gas_error":
+                    st.error("【通信エラー】Googleスプレッドシートへの送信に失敗しました。時間をおいてもう一度お試しいただくか、管理者へ連絡してください。")
+                    # エラーになったら、もう一度押せるようにフラグを解除する
+                    st.session_state.is_processing = False
+                else:
+                    st.session_state.is_submitted = True
+                    st.session_state.confirm_mode = False
+                    st.session_state.is_processing = False # 成功後も念のため解除
+                    st.rerun()
 
 else:
     st.markdown("#### ライブプレビュー")
