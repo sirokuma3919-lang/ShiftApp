@@ -221,13 +221,16 @@ init_session_state()
 input_disabled = st.session_state.confirm_mode or st.session_state.is_submitted
 num_days, day_labels = get_month_days()
 
-# --- タイトル ＆ 管理者パネル ---
 col_title, col_admin = st.columns([4, 1])
 with col_title:
     st.markdown(f"### {TARGET_YEAR}年{TARGET_MONTH}月分 シフト希望提出フォーム")
     st.write("時間の希望がある日だけ選択してください。希望がない日は「希望なし」のままでOKです。\n\nシステムの不具合がありましたら、不具合の画面の写真とともに、箭内にご連絡ください。")
 with col_admin:
     show_admin_panel()
+
+# 🌟 ここに追加！誰でも見られる折りたたみパネル！
+with st.expander("👀 現在の提出状況を確認する（誰が未提出か見られます）"):
+    show_submission_status()
 
 st.divider()
 
