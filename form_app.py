@@ -59,7 +59,7 @@ def save_shift_data(emp_code, name, department, target_days, shift_requests):
     
     # 送信用のデータを作成
     data = {
-        "対象月": f"{TARGET_MONTH}",
+        "対象月": f"{TARGET_MONTH}月",
         "提出日時": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "従業員コード": safe_emp_code,
         "名前": safe_name, 
