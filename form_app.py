@@ -39,7 +39,6 @@ def init_session_state():
         st.session_state.is_submitted = False
     if "excel_warning" not in st.session_state:
         st.session_state.excel_warning = False
-    # 🌟【追加】連打防止用の「処理中」フラグ
     if "is_processing" not in st.session_state:
         st.session_state.is_processing = False
 
@@ -185,13 +184,10 @@ def show_admin_panel():
                         
                         if len(raw_member) > 1:
                             df_members = pd.DataFrame(raw_member[1:], columns=raw_member[0])
-                            # 見出しの余計な空白を削除
                             df_members.columns = df_members.columns.str.strip()
                             
                             if set(["従業員コード", "名前", "部門"]).issubset(df_members.columns):
                                 df_status = df_members[["従業員コード", "名前", "部門"]].copy()
-                                
-                                # 【強力補正】従業員コードの「.0」や空白を自動で消して綺麗な文字列にする
                                 df_status["従業員コード"] = df_status["従業員コード"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                                 
                                 submitted_codes = []
@@ -199,10 +195,8 @@ def show_admin_panel():
                                     df_submitted = pd.DataFrame(raw_shift[1:], columns=raw_shift[0])
                                     df_submitted.columns = df_submitted.columns.str.strip()
                                     if "従業員コード" in df_submitted.columns:
-                                        # こちらのコードも同様に綺麗にする
                                         submitted_codes = df_submitted["従業員コード"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().tolist()
                                 
-                                # 提出状況を判定
                                 df_status["提出状況"] = df_status["従業員コード"].apply(
                                     lambda x: "提出済" if x in submitted_codes else "未提出"
                                 )
@@ -293,38 +287,34 @@ elif st.session_state.confirm_mode:
             st.rerun()
     with col_btn2:
         if st.button("この内容で確定・提出する", type="primary", use_container_width=True):
-            
-            # 🌟【追加】連打防止機能
-            if st.session_state.is_processing:
-                # 既にボタンが押されて処理中の場合は、警告を出して何もしない
-                st.toast("⚠️ 現在データを送信中です。そのままお待ちください。", icon="⏳")
-            else:
-                # 処理中フラグをONにする
-                st.session_state.is_processing = True
-                
-                # 🌟【追加】ぐるぐる回るスピナーで「送信中」を分かりやすくする
-                with st.spinner("クラウドにシフトを送信しています..."):
-                    result = save_shift_data(emp_code, name, department, target_days, shift_requests)
-                
-                if result == "gas_error":
-                    st.error("【通信エラー】Googleスプレッドシートへの送信に失敗しました。時間をおいてもう一度お試しいただくか、管理者へ連絡してください。")
-                    # エラーになったら、もう一度押せるようにフラグを解除する
-                    st.session_state.is_processing = False
-                else:
-                    st.session_state.is_submitted = True
-                    st.session_state.confirm_mode = False
-                    st.session_state.is_processing = False # 成功後も念のため解除
-                    st.rerun()
+            # ボタンが押されたらフラグを立てて即座に再描画（連打防止）
+            st.session_state.is_processing = True
+            st.rerun()
+
+# 🌟【修正】ボタンのブロックの外で安全に通信処理を実行する仕組み
+if st.session_state.get("is_processing", False) and not st.session_state.is_submitted:
+    with st.spinner("クラウドにシフトを送信しています..."):
+        result = save_shift_data(emp_code, name, department, target_days, shift_requests)
+    
+    if result == "gas_error":
+        st.error("【通信エラー】Googleスプレッドシートへの送信に失敗しました。時間をおいてもう一度お試しいただくか、管理者へ連絡してください。")
+        st.session_state.is_processing = False
+    else:
+        st.session_state.is_submitted = True
+        st.session_state.confirm_mode = False
+        st.session_state.is_processing = False
+        st.rerun()
 
 else:
-    st.markdown("#### ライブプレビュー")
-    st.table(generate_styled_calendar(day_labels, shift_requests))
-    st.write("") 
-    if st.button("確認画面へ進む", type="primary", use_container_width=True):
-        if not name: st.error("お名前が入力されていません。")
-        if department == "選択してください": st.error("部門が選択されていません。")
-        if not emp_code: st.error("従業員コードが入力されていません。")
-        
-        if name and department != '選択してください' and emp_code:
-            st.session_state.confirm_mode = True
-            st.rerun()
+    if not st.session_state.is_submitted and not st.session_state.confirm_mode:
+        st.markdown("#### ライブプレビュー")
+        st.table(generate_styled_calendar(day_labels, shift_requests))
+        st.write("") 
+        if st.button("確認画面へ進む", type="primary", use_container_width=True):
+            if not name: st.error("お名前が入力されていません。")
+            if department == "選択してください": st.error("部門が選択されていません。")
+            if not emp_code: st.error("従業員コードが入力されていません。")
+            
+            if name and department != '選択してください' and emp_code:
+                st.session_state.confirm_mode = True
+                st.rerun()
