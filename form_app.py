@@ -134,19 +134,61 @@ def generate_styled_calendar(day_labels, shift_requests):
 
     return df.style.apply(style_cells, axis=None)
 
+def show_submission_status():
+    """誰でも見られる現在の提出状況一覧"""
+    with st.spinner("クラウドから名簿と提出状況を照合中..."):
+        try:
+            # 1. GASから「名簿」を取得
+            res_member = requests.get(f"{GAS_URL}?type=member", timeout=15)
+            # 2. GASから「シフト提出者」を取得
+            res_shift = requests.get(f"{GAS_URL}?type=shift&month={TARGET_MONTH}", timeout=15)
+            
+            if res_member.status_code == 200 and res_shift.status_code == 200:
+                raw_member = res_member.json()
+                raw_shift = res_shift.json()
+                
+                if len(raw_member) > 1:
+                    df_members = pd.DataFrame(raw_member[1:], columns=raw_member[0])
+                    
+                    if set(["従業員コード", "名前", "部門"]).issubset(df_members.columns):
+                        df_status = df_members[["従業員コード", "名前", "部門"]].copy()
+                        
+                        submitted_codes = []
+                        if len(raw_shift) > 1:
+                            df_submitted = pd.DataFrame(raw_shift[1:], columns=raw_shift[0])
+                            if "従業員コード" in df_submitted.columns:
+                                submitted_codes = df_submitted["従業員コード"].astype(str).tolist()
+                        
+                        df_status["提出状況"] = df_status["従業員コード"].astype(str).apply(
+                            lambda x: "提出済" if x in submitted_codes else "未提出"
+                        )
+                        df_status = df_status.sort_values("提出状況", ascending=False)
+                        
+                        def highlight_unsubmitted(row):
+                            return ['background-color: #FFE6E6' if row['提出状況'] == '未提出' else ''] * len(row)
+                        
+                        st.dataframe(df_status.style.apply(highlight_unsubmitted, axis=1), hide_index=True, use_container_width=True)
+                    else:
+                        st.error("スプレッドシートの「名簿」タブに「従業員コード」「名前」「部門」の列がありません。")
+                else:
+                    st.warning("スプレッドシートの「名簿」タブにスタッフのデータが登録されていません。")
+            else:
+                st.error("データの取得に失敗しました。")
+        except Exception as e:
+            st.error(f"読み込みエラー: {e}")
+
 def show_admin_panel():
-    """右上の店長用確認パネル（Excelダウンロード機能 ＆ クラウド提出状況一覧付き）"""
+    """右上の店長用確認パネル（Excelダウンロード機能のみ）"""
     with st.popover("店長専用メニュー", use_container_width=True):
         admin_pass = st.text_input("店長用パスワードを入力", type="password")
         if admin_pass == ADMIN_PASSWORD:
             st.write("---")
             st.markdown("#### 📥 シフトデータのダウンロード")
+            st.write("スプレッドシートの最新データをExcelファイルとして保存します。")
             
-            # Excel化ボタン
             if st.button("最新のExcelを作成する", use_container_width=True):
                 with st.spinner("クラウドからデータを取得中..."):
                     try:
-                        # 🌟【変更】GASに「シフトのデータをちょうだい」と指定
                         response = requests.get(f"{GAS_URL}?type=shift&month={TARGET_MONTH}", timeout=15)
                         if response.status_code == 200:
                             raw_data = response.json()
@@ -171,55 +213,6 @@ def show_admin_panel():
                             st.error("データの取得に失敗しました。")
                     except Exception as e:
                         st.error(f"通信エラーが発生しました: {e}")
-
-            st.write("---")
-            st.markdown("#### 👤 提出状況一覧（リアルタイム）")
-            
-            with st.spinner("名簿と提出状況を照合中..."):
-                try:
-                    # 🌟 1. GASから「名簿」を取得
-                    res_member = requests.get(f"{GAS_URL}?type=member", timeout=15)
-                    # 🌟 2. GASから「シフト提出者」を取得
-                    res_shift = requests.get(f"{GAS_URL}?type=shift&month={TARGET_MONTH}", timeout=15)
-                    
-                    if res_member.status_code == 200 and res_shift.status_code == 200:
-                        raw_member = res_member.json()
-                        raw_shift = res_shift.json()
-                        
-                        if len(raw_member) > 1:
-                            # 名簿をデータフレームにする
-                            df_members = pd.DataFrame(raw_member[1:], columns=raw_member[0])
-                            
-                            # 名簿に必要な列があるかチェック
-                            if set(["従業員コード", "名前", "部門"]).issubset(df_members.columns):
-                                df_status = df_members[["従業員コード", "名前", "部門"]].copy()
-                                
-                                # 提出済みの従業員コードリストを作成
-                                submitted_codes = []
-                                if len(raw_shift) > 1:
-                                    df_submitted = pd.DataFrame(raw_shift[1:], columns=raw_shift[0])
-                                    if "従業員コード" in df_submitted.columns:
-                                        submitted_codes = df_submitted["従業員コード"].astype(str).tolist()
-                                
-                                # 提出状況を判定
-                                df_status["提出状況"] = df_status["従業員コード"].astype(str).apply(
-                                    lambda x: "提出済" if x in submitted_codes else "未提出"
-                                )
-                                df_status = df_status.sort_values("提出状況", ascending=False)
-                                
-                                # 未提出者を赤っぽく目立たせる
-                                def highlight_unsubmitted(row):
-                                    return ['background-color: #FFE6E6' if row['提出状況'] == '未提出' else ''] * len(row)
-                                
-                                st.dataframe(df_status.style.apply(highlight_unsubmitted, axis=1), hide_index=True, use_container_width=True)
-                            else:
-                                st.error("スプレッドシートの「名簿」タブに「従業員コード」「名前」「部門」の列がありません。")
-                        else:
-                            st.warning("スプレッドシートの「名簿」タブにスタッフのデータが登録されていません。")
-                    else:
-                        st.error("データの取得に失敗しました。")
-                except Exception as e:
-                    st.error(f"読み込みエラー: {e}")
 
 # ==========================================
 # 3. メインの画面描画
