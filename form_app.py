@@ -15,7 +15,7 @@ today = datetime.date.today()
 TARGET_YEAR = today.year + 1 if today.month == 12 else today.year
 TARGET_MONTH = 1 if today.month == 12 else today.month + 1
 
-# ※ローカル環境用のファイル名（クラウド上ではバックアップ用として動作します）
+# ローカルでは保存用、クラウド上ではバックアップ上
 CSV_REQUESTS = f"【プログラム用】{TARGET_MONTH}月シフト提出状況.csv"
 EXCEL_REQUESTS = f"【店長確認用】{TARGET_MONTH}月シフト提出状況.xlsx"
 LOCK_FILE = f"{TARGET_MONTH}月シフト提出状況.lock"
@@ -23,7 +23,7 @@ LOCK_FILE = f"{TARGET_MONTH}月シフト提出状況.lock"
 DEPARTMENTS = ["選択してください", "家電", "季節AV", "情報", "通信"]
 ADMIN_PASSWORD = "password"
 
-# 🌟【超重要】取得した「ウェブアプリのURL」
+# GoogleスプレッドシートのScriptsたち
 GAS_URL = "https://script.google.com/macros/s/AKfycbx20gcPFY7CKjGRjNMNHI9zNgwzmC_i8u1Wsw1r2BrpTtYUmB06ejgWFGKtLbJaTlPkGw/exec"
 
 st.set_page_config(page_title="シフト希望提出フォーム", layout="wide")
@@ -78,7 +78,7 @@ def save_shift_data(emp_code, name, department, target_days, shift_requests):
     except Exception:
         return "gas_error"
     
-    # 🌟 2. 念のためサーバーのローカル環境にもバックアップを残す
+    # 念のためサーバーのローカル環境にもバックアップを残す
     df_submit = pd.DataFrame([data])
     lock = FileLock(LOCK_FILE)
     with lock:
@@ -139,7 +139,7 @@ def show_admin_panel():
         admin_pass = st.text_input("店長用パスワードを入力", type="password")
         if admin_pass == ADMIN_PASSWORD:
             st.write("---")
-            st.markdown("#### 📥 シフトデータのダウンロード")
+            st.markdown("#### シフトデータのダウンロード")
             st.write("スプレッドシートの最新データをExcelファイルとして保存します。")
             
             if st.button("最新のExcelを作成する", use_container_width=True):
@@ -156,7 +156,7 @@ def show_admin_panel():
                                 excel_data = output.getvalue()
                                 st.success("✅ 準備完了！下のボタンから保存してください。")
                                 st.download_button(
-                                    label="📊 Excelファイル（.xlsx）を保存",
+                                    label="Excelファイル（.xlsx）を保存",
                                     data=excel_data,
                                     file_name=EXCEL_REQUESTS,
                                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -171,7 +171,7 @@ def show_admin_panel():
                         st.error(f"通信エラーが発生しました: {e}")
 
             st.write("---")
-            st.markdown("#### 👤 提出状況一覧（未提出チェック）")
+            st.markdown("#### 提出状況一覧（未提出チェック）")
             
             with st.spinner("名簿と提出状況を照合中..."):
                 try:
@@ -291,7 +291,7 @@ elif st.session_state.confirm_mode:
             st.session_state.is_processing = True
             st.rerun()
 
-# 🌟【修正】ボタンのブロックの外で安全に通信処理を実行する仕組み
+# 連打対策
 if st.session_state.get("is_processing", False) and not st.session_state.is_submitted:
     with st.spinner("クラウドにシフトを送信しています..."):
         result = save_shift_data(emp_code, name, department, target_days, shift_requests)
