@@ -5,6 +5,7 @@ import datetime
 import calendar
 import unicodedata
 from filelock import FileLock
+import requests  # 🌟通信用の部品を追加
 
 # ==========================================
 # ⚙️ 1. 設定値（定数）の定義
@@ -20,6 +21,9 @@ LOCK_FILE = f"{TARGET_MONTH}月シフト提出状況.lock"
 CSV_MEMBERS = "member.csv"
 DEPARTMENTS = ["選択してください", "家電", "季節AV", "情報", "通信"]
 ADMIN_PASSWORD = "password"
+
+# 🌟【超重要】ステップ1の最後にコピーした「ウェブアプリのURL」をここに貼り付けてください！
+GAS_URL = "https://script.google.com/macros/s/AKfycby2emWCmvv2xGDqFK76sbNM1j2Iw8Z9pjb2OULCyVMU9teTrJhQrWtY6zGZuuMvLmC2FA/exec"
 
 st.set_page_config(page_title="シフト希望提出フォーム", layout="wide")
 
@@ -48,24 +52,38 @@ def get_month_days():
     return num_days, day_labels
 
 def save_shift_data(emp_code, name, department, target_days, shift_requests):
-    """シフトデータを保存する（絶対止まらない＆自動修復機能付き）"""
+    """シフトデータを保存する（Googleスプレッドシートへ自動送信）"""
     safe_emp_code = unicodedata.normalize('NFKC', emp_code).strip()
     safe_name = name.strip()
     
+    # 送信用のデータを作成（分かりやすいように提出日時も秒単位で記録します）
     data = {
+        "提出日時": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "従業員コード": safe_emp_code,
         "名前": safe_name, 
         "部門": department,
         "希望出勤時間": target_days
     }
     data.update(shift_requests)
-    df_submit = pd.DataFrame([data])
     
+    # 🌟 1. Googleスプレッドシート（GAS）へデータを送信
+    try:
+        response = requests.post(GAS_URL, json=data, timeout=10)
+        if response.status_code != 200 or response.json().get("status") != "success":
+            return "gas_error"  # 送信失敗時はエラーを返す
+    except Exception:
+        return "gas_error"
+    
+    # 🌟 2. 念のためサーバーのローカル環境（CSV/Excel）にもバックアップを残す
+    df_submit = pd.DataFrame([data])
     lock = FileLock(LOCK_FILE)
     with lock:
         if os.path.exists(CSV_REQUESTS):
-            df_existing = pd.read_csv(CSV_REQUESTS, encoding="utf-8-sig")
-            df_final = pd.concat([df_existing, df_submit], ignore_index=True)
+            try:
+                df_existing = pd.read_csv(CSV_REQUESTS, encoding="utf-8-sig")
+                df_final = pd.concat([df_existing, df_submit], ignore_index=True)
+            except Exception:
+                df_final = df_submit
         else:
             df_final = df_submit
             
@@ -117,72 +135,51 @@ def generate_styled_calendar(day_labels, shift_requests):
 
 def show_admin_panel():
     """右上の店長用確認パネルを表示する"""
-    with st.popover("提出状況の確認", use_container_width=True):
+    with st.popover("店長専用メニュー", use_container_width=True):
         admin_pass = st.text_input("店長用パスワードを入力", type="password")
         if admin_pass == ADMIN_PASSWORD:
             st.write("---")
+            st.markdown("#### 📥 シフトデータのダウンロード")
+            st.write("Googleスプレッドシートの最新データをExcelファイルとしてダウンロードします。")
             
-            # ==========================================
-            # ダウンロード ＆ 同期ボタンエリア
-            # ==========================================
-            st.markdown("#### Excelファイルの管理")
-            
-            # 同期ボタン
-            if st.button("🔄 Excelファイルを最新データに更新", use_container_width=True):
-                if os.path.exists(CSV_REQUESTS):
+            # データ取得＆Excel化ボタン
+            if st.button("最新のExcelを作成する", use_container_width=True):
+                with st.spinner("クラウドからデータを取得中..."):
                     try:
-                        df_sync = pd.read_csv(CSV_REQUESTS, encoding="utf-8-sig")
-                        df_sync.to_excel(EXCEL_REQUESTS, index=False)
-                        st.success("✅ Excelファイルを最新状態に同期しました！")
-                    except PermissionError:
-                        st.error("エラー：誰かがExcelファイルを開いています。閉じてからやり直してください。")
-                else:
-                    st.info("まだ提出データがありません。")
-            
-            # ダウンロードボタン
-            if os.path.exists(EXCEL_REQUESTS):
-                with open(EXCEL_REQUESTS, "rb") as f:
-                    st.download_button(
-                        label="最新のExcelファイルをダウンロード",
-                        data=f,
-                        file_name=EXCEL_REQUESTS,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True,
-                        type="primary"
-                    )
-            else:
-                st.button("ダウンロード (準備中)", disabled=True, use_container_width=True)
-                    
-            st.write("---")
-            st.markdown("#### 提出状況一覧")
-            
-            if os.path.exists(CSV_MEMBERS):
-                try:
-                    df_members = pd.read_csv(CSV_MEMBERS, encoding="utf-8-sig", on_bad_lines='skip')
-                    if set(["従業員コード", "名前", "部門"]).issubset(df_members.columns):
-                        df_status = df_members[["従業員コード", "名前", "部門"]].copy()
+                        # GASからデータを取得
+                        response = requests.get(GAS_URL, timeout=15)
                         
-                        submitted_codes = []
-                        if os.path.exists(CSV_REQUESTS):
-                            df_submitted = pd.read_csv(CSV_REQUESTS, encoding="utf-8-sig", on_bad_lines='skip')
-                            if "従業員コード" in df_submitted.columns:
-                                submitted_codes = df_submitted["従業員コード"].astype(str).tolist()
-                        
-                        df_status["提出状況"] = df_status["従業員コード"].astype(str).apply(
-                            lambda x: "提出済" if x in submitted_codes else "未提出"
-                        )
-                        df_status = df_status.sort_values("提出状況", ascending=False)
-                        
-                        def highlight_unsubmitted(row):
-                            return ['background-color: #FFE6E6' if row['提出状況'] == '未提出' else ''] * len(row)
-                        
-                        st.dataframe(df_status.style.apply(highlight_unsubmitted, axis=1), hide_index=True, use_container_width=True)
-                    else:
-                        st.error(f"{CSV_MEMBERS}に必要な列がありません。")
-                except Exception as e:
-                    st.error(f"読み込みエラー: {e}")
-            else:
-                st.warning(f"{CSV_MEMBERS} が見つかりません。")
+                        if response.status_code == 200:
+                            raw_data = response.json()
+                            
+                            # データが1行（見出し）より多い場合のみ処理
+                            if len(raw_data) > 1:
+                                # 1行目を見出し、2行目以降をデータとして表（データフレーム）にする
+                                df_dl = pd.DataFrame(raw_data[1:], columns=raw_data[0])
+                                
+                                # 🌟 ここが魔法！空中にExcelファイルを作り出す
+                                output = io.BytesIO()
+                                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                                    df_dl.to_excel(writer, index=False, sheet_name=f'{TARGET_MONTH}月シフト提出')
+                                excel_data = output.getvalue()
+                                
+                                st.success("✅ 準備完了！下のボタンから保存してください。")
+                                
+                                # ダウンロードボタンを表示
+                                st.download_button(
+                                    label="📊 Excelファイル（.xlsx）を保存",
+                                    data=excel_data,
+                                    file_name=EXCEL_REQUESTS,
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    use_container_width=True,
+                                    type="primary"
+                                )
+                            else:
+                                st.info("まだ誰もシフトを提出していません。")
+                        else:
+                            st.error("データの取得に失敗しました。")
+                    except Exception as e:
+                        st.error(f"通信エラーが発生しました: {e}")
 
 # ==========================================
 # 3. メインの画面描画
@@ -263,7 +260,9 @@ elif st.session_state.confirm_mode:
             
             result = save_shift_data(emp_code, name, department, target_days, shift_requests)
             
-            if result == "csv_error":
+            if result == "gas_error":
+                st.error("【通信エラー】Googleスプレッドシートへの送信に失敗しました。時間をおいてもう一度お試しいただくか、管理者へ連絡してください。")
+            elif result == "csv_error":
                 st.error("【エラー】現在、本体のデータファイルが他のPCで開かれています。お手数ですが、数分待ってからもう一度確定ボタンを押してください。")
             else:
                 st.session_state.is_submitted = True
