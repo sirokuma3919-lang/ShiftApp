@@ -132,12 +132,13 @@ def generate_styled_calendar(day_labels, shift_requests):
     return df.style.apply(style_cells, axis=None)
 
 def show_admin_panel():
-    """右上の店長用確認パネル（原因調査モード付き）"""
+    """右上の店長用確認パネル（Excelダウンロード機能 ＆ 提出状況一覧）"""
     with st.popover("店長専用メニュー", use_container_width=True):
         admin_pass = st.text_input("店長用パスワードを入力", type="password")
         if admin_pass == ADMIN_PASSWORD:
             st.write("---")
             st.markdown("#### 📥 シフトデータのダウンロード")
+            st.write("スプレッドシートの最新データをExcelファイルとして保存します。")
             
             if st.button("最新のExcelを作成する", use_container_width=True):
                 with st.spinner("クラウドからデータを取得中..."):
@@ -179,17 +180,15 @@ def show_admin_panel():
                         raw_member = res_member.json()
                         raw_shift = res_shift.json()
                         
-                        # 🌟【調査エリア】システムが何を読み取っているか画面に表示します！
-                        st.write(f"🔍 【調査1】名簿のデータ行数: {len(raw_member)}行（見出し含む）")
-                        
                         if len(raw_member) > 1:
                             df_members = pd.DataFrame(raw_member[1:], columns=raw_member[0])
+                            # 見出しの余計な空白を削除
                             df_members.columns = df_members.columns.str.strip()
-                            
-                            st.write(f"🔍 【調査2】読み取った列名: {df_members.columns.tolist()}")
                             
                             if set(["従業員コード", "名前", "部門"]).issubset(df_members.columns):
                                 df_status = df_members[["従業員コード", "名前", "部門"]].copy()
+                                
+                                # 【強力補正】従業員コードの「.0」や空白を自動で消して綺麗な文字列にする
                                 df_status["従業員コード"] = df_status["従業員コード"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                                 
                                 submitted_codes = []
@@ -197,8 +196,10 @@ def show_admin_panel():
                                     df_submitted = pd.DataFrame(raw_shift[1:], columns=raw_shift[0])
                                     df_submitted.columns = df_submitted.columns.str.strip()
                                     if "従業員コード" in df_submitted.columns:
+                                        # こちらのコードも同様に綺麗にする
                                         submitted_codes = df_submitted["従業員コード"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().tolist()
                                 
+                                # 提出状況を判定
                                 df_status["提出状況"] = df_status["従業員コード"].apply(
                                     lambda x: "提出済" if x in submitted_codes else "未提出"
                                 )
@@ -209,13 +210,13 @@ def show_admin_panel():
                                 
                                 st.dataframe(df_status.style.apply(highlight_unsubmitted, axis=1), hide_index=True, use_container_width=True)
                             else:
-                                st.error("❌ エラー：必須の3つの列（従業員コード, 名前, 部門）のどれかが見つかりません。調査2の文字を確認してください。")
+                                st.error("スプレッドシートの「名簿」タブに「従業員コード」「名前」「部門」の列が見つかりません。")
                         else:
-                            st.warning("⚠️ スプレッドシートの「名簿」タブが空っぽ（見出しのみ、または0行）です。")
+                            st.warning("スプレッドシートの「名簿」タブにスタッフのデータが登録されていません。（2行目以降が空です）")
                     else:
-                        st.error(f"❌ 通信エラー: 名簿({res_member.status_code}), シフト({res_shift.status_code})")
+                        st.error("データの取得に失敗しました。")
                 except Exception as e:
-                    st.error(f"❌ 読み込みエラー: {e}")
+                    st.error(f"読み込みエラー: {e}")
 
 # ==========================================
 # 3. メインの画面描画
