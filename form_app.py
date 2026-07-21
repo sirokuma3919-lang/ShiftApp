@@ -5,8 +5,8 @@ import datetime
 import calendar
 import unicodedata
 from filelock import FileLock
-import requests  # 🌟通信用の部品を追加
-import io
+import requests
+import io  # 空中でExcelを作るための部品
 
 # ==========================================
 # ⚙️ 1. 設定値（定数）の定義
@@ -15,15 +15,15 @@ today = datetime.date.today()
 TARGET_YEAR = today.year + 1 if today.month == 12 else today.year
 TARGET_MONTH = 1 if today.month == 12 else today.month + 1
 
+# ※ローカル環境用のファイル名（クラウド上ではバックアップ用として動作します）
 CSV_REQUESTS = f"【プログラム用】{TARGET_MONTH}月シフト提出状況.csv"
 EXCEL_REQUESTS = f"【店長確認用】{TARGET_MONTH}月シフト提出状況.xlsx"
 LOCK_FILE = f"{TARGET_MONTH}月シフト提出状況.lock"
 
-CSV_MEMBERS = "member.csv"
 DEPARTMENTS = ["選択してください", "家電", "季節AV", "情報", "通信"]
 ADMIN_PASSWORD = "password"
 
-# 🌟【超重要】ステップ1の最後にコピーした「ウェブアプリのURL」をここに貼り付けてください！
+# 🌟【超重要】取得した「ウェブアプリのURL」をここに貼り付けてください！
 GAS_URL = "https://script.google.com/macros/s/AKfycby2emWCmvv2xGDqFK76sbNM1j2Iw8Z9pjb2OULCyVMU9teTrJhQrWtY6zGZuuMvLmC2FA/exec"
 
 st.set_page_config(page_title="シフト希望提出フォーム", layout="wide")
@@ -57,8 +57,9 @@ def save_shift_data(emp_code, name, department, target_days, shift_requests):
     safe_emp_code = unicodedata.normalize('NFKC', emp_code).strip()
     safe_name = name.strip()
     
-    # 送信用のデータを作成（分かりやすいように提出日時も秒単位で記録します）
+    # 送信用のデータを作成
     data = {
+        "対象月": f"{TARGET_MONTH}",
         "提出日時": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "従業員コード": safe_emp_code,
         "名前": safe_name, 
@@ -71,11 +72,11 @@ def save_shift_data(emp_code, name, department, target_days, shift_requests):
     try:
         response = requests.post(GAS_URL, json=data, timeout=10)
         if response.status_code != 200 or response.json().get("status") != "success":
-            return "gas_error"  # 送信失敗時はエラーを返す
+            return "gas_error"
     except Exception:
         return "gas_error"
     
-    # 🌟 2. 念のためサーバーのローカル環境（CSV/Excel）にもバックアップを残す
+    # 🌟 2. 念のためサーバーのローカル環境にもバックアップを残す
     df_submit = pd.DataFrame([data])
     lock = FileLock(LOCK_FILE)
     with lock:
@@ -90,13 +91,9 @@ def save_shift_data(emp_code, name, department, target_days, shift_requests):
             
         try:
             df_final.to_csv(CSV_REQUESTS, index=False, encoding="utf-8-sig")
-        except PermissionError:
-            return "csv_error"
-        
-        try:
             df_final.to_excel(EXCEL_REQUESTS, index=False)
         except Exception:
-            return "excel_error"
+            pass # クラウド環境ではエラーを無視して進める
             
     return "success"
 
@@ -134,51 +131,8 @@ def generate_styled_calendar(day_labels, shift_requests):
 
     return df.style.apply(style_cells, axis=None)
 
-def show_submission_status():
-    """誰でも見られる現在の提出状況一覧"""
-    with st.spinner("クラウドから名簿と提出状況を照合中..."):
-        try:
-            # 1. GASから「名簿」を取得
-            res_member = requests.get(f"{GAS_URL}?type=member", timeout=15)
-            # 2. GASから「シフト提出者」を取得
-            res_shift = requests.get(f"{GAS_URL}?type=shift&month={TARGET_MONTH}", timeout=15)
-            
-            if res_member.status_code == 200 and res_shift.status_code == 200:
-                raw_member = res_member.json()
-                raw_shift = res_shift.json()
-                
-                if len(raw_member) > 1:
-                    df_members = pd.DataFrame(raw_member[1:], columns=raw_member[0])
-                    
-                    if set(["従業員コード", "名前", "部門"]).issubset(df_members.columns):
-                        df_status = df_members[["従業員コード", "名前", "部門"]].copy()
-                        
-                        submitted_codes = []
-                        if len(raw_shift) > 1:
-                            df_submitted = pd.DataFrame(raw_shift[1:], columns=raw_shift[0])
-                            if "従業員コード" in df_submitted.columns:
-                                submitted_codes = df_submitted["従業員コード"].astype(str).tolist()
-                        
-                        df_status["提出状況"] = df_status["従業員コード"].astype(str).apply(
-                            lambda x: "提出済" if x in submitted_codes else "未提出"
-                        )
-                        df_status = df_status.sort_values("提出状況", ascending=False)
-                        
-                        def highlight_unsubmitted(row):
-                            return ['background-color: #FFE6E6' if row['提出状況'] == '未提出' else ''] * len(row)
-                        
-                        st.dataframe(df_status.style.apply(highlight_unsubmitted, axis=1), hide_index=True, use_container_width=True)
-                    else:
-                        st.error("スプレッドシートの「名簿」タブに「従業員コード」「名前」「部門」の列がありません。")
-                else:
-                    st.warning("スプレッドシートの「名簿」タブにスタッフのデータが登録されていません。")
-            else:
-                st.error("データの取得に失敗しました。")
-        except Exception as e:
-            st.error(f"読み込みエラー: {e}")
-
 def show_admin_panel():
-    """右上の店長用確認パネル（Excelダウンロード機能のみ）"""
+    """右上の店長用確認パネル（Excelダウンロード機能 ＆ 提出状況一覧）"""
     with st.popover("店長専用メニュー", use_container_width=True):
         admin_pass = st.text_input("店長用パスワードを入力", type="password")
         if admin_pass == ADMIN_PASSWORD:
@@ -214,6 +168,56 @@ def show_admin_panel():
                     except Exception as e:
                         st.error(f"通信エラーが発生しました: {e}")
 
+            st.write("---")
+            st.markdown("#### 👤 提出状況一覧（未提出チェック）")
+            
+            with st.spinner("名簿と提出状況を照合中..."):
+                try:
+                    res_member = requests.get(f"{GAS_URL}?type=member", timeout=15)
+                    res_shift = requests.get(f"{GAS_URL}?type=shift&month={TARGET_MONTH}", timeout=15)
+                    
+                    if res_member.status_code == 200 and res_shift.status_code == 200:
+                        raw_member = res_member.json()
+                        raw_shift = res_shift.json()
+                        
+                        if len(raw_member) > 1:
+                            df_members = pd.DataFrame(raw_member[1:], columns=raw_member[0])
+                            # 見出しの余計な空白を削除
+                            df_members.columns = df_members.columns.str.strip()
+                            
+                            if set(["従業員コード", "名前", "部門"]).issubset(df_members.columns):
+                                df_status = df_members[["従業員コード", "名前", "部門"]].copy()
+                                
+                                # 【強力補正】従業員コードの「.0」や空白を自動で消して綺麗な文字列にする
+                                df_status["従業員コード"] = df_status["従業員コード"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                                
+                                submitted_codes = []
+                                if len(raw_shift) > 1:
+                                    df_submitted = pd.DataFrame(raw_shift[1:], columns=raw_shift[0])
+                                    df_submitted.columns = df_submitted.columns.str.strip()
+                                    if "従業員コード" in df_submitted.columns:
+                                        # こちらのコードも同様に綺麗にする
+                                        submitted_codes = df_submitted["従業員コード"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().tolist()
+                                
+                                # 提出状況を判定
+                                df_status["提出状況"] = df_status["従業員コード"].apply(
+                                    lambda x: "提出済" if x in submitted_codes else "未提出"
+                                )
+                                df_status = df_status.sort_values("提出状況", ascending=False)
+                                
+                                def highlight_unsubmitted(row):
+                                    return ['background-color: #FFE6E6' if row['提出状況'] == '未提出' else ''] * len(row)
+                                
+                                st.dataframe(df_status.style.apply(highlight_unsubmitted, axis=1), hide_index=True, use_container_width=True)
+                            else:
+                                st.error("スプレッドシートの「名簿」タブに「従業員コード」「名前」「部門」の列が見つかりません。")
+                        else:
+                            st.warning("スプレッドシートの「名簿」タブにスタッフのデータが登録されていません。（2行目以降が空です）")
+                    else:
+                        st.error("データの取得に失敗しました。")
+                except Exception as e:
+                    st.error(f"読み込みエラー: {e}")
+
 # ==========================================
 # 3. メインの画面描画
 # ==========================================
@@ -221,16 +225,13 @@ init_session_state()
 input_disabled = st.session_state.confirm_mode or st.session_state.is_submitted
 num_days, day_labels = get_month_days()
 
+# --- タイトル ＆ 管理者パネル ---
 col_title, col_admin = st.columns([4, 1])
 with col_title:
     st.markdown(f"### {TARGET_YEAR}年{TARGET_MONTH}月分 シフト希望提出フォーム")
     st.write("時間の希望がある日だけ選択してください。希望がない日は「希望なし」のままでOKです。\n\nシステムの不具合がありましたら、不具合の画面の写真とともに、箭内にご連絡ください。")
 with col_admin:
     show_admin_panel()
-
-# 🌟 ここに追加！誰でも見られる折りたたみパネル！
-with st.expander("👀 現在の提出状況を確認する（誰が未提出か見られます）"):
-    show_submission_status()
 
 st.divider()
 
@@ -273,10 +274,6 @@ st.divider()
 # --- プレビュー ＆ ボタンエリア ---
 if st.session_state.is_submitted:
     st.success(f"{name}さん、シフトの提出が完了しました。")
-    
-    if st.session_state.excel_warning:
-        st.warning("⚠️ 現在店長がExcelファイルを確認中だったため、Excelへの出力は一時スキップされました。（システムには正常に提出されています。後で自動同期されますのでご安心ください）")
-        
     st.info("※修正が必要な場合は店長または箭内へ連絡してください。")
     st.markdown("#### 提出されたシフト内容")
     st.table(generate_styled_calendar(day_labels, shift_requests))
@@ -298,13 +295,9 @@ elif st.session_state.confirm_mode:
             
             if result == "gas_error":
                 st.error("【通信エラー】Googleスプレッドシートへの送信に失敗しました。時間をおいてもう一度お試しいただくか、管理者へ連絡してください。")
-            elif result == "csv_error":
-                st.error("【エラー】現在、本体のデータファイルが他のPCで開かれています。お手数ですが、数分待ってからもう一度確定ボタンを押してください。")
             else:
                 st.session_state.is_submitted = True
                 st.session_state.confirm_mode = False
-                if result == "excel_error":
-                    st.session_state.excel_warning = True
                 st.rerun()
 
 else:
