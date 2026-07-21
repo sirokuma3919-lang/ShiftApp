@@ -6,6 +6,7 @@ import calendar
 import unicodedata
 from filelock import FileLock
 import requests  # 🌟通信用の部品を追加
+import io
 
 # ==========================================
 # ⚙️ 1. 設定値（定数）の定義
